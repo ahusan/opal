@@ -18,9 +18,18 @@ export async function onRequestGet({ env }) {
   return J(results || []);
 }
 
+const ID_OK = /^[A-Za-z0-9_.-]{1,64}$/;
+const MAX_DOC = 2 * 1024 * 1024; // 2 MB per resort doc — far above real payloads
+
 export async function onRequestPut({ env, request }) {
   const b = await request.json().catch(() => null);
   if (!b || !b.id || !b.doc) return J({ error: 'id and doc are required' }, 400);
+  if (typeof b.id !== 'string' || !ID_OK.test(b.id)) return J({ error: 'invalid id' }, 400);
+  if (typeof b.doc !== 'string' || b.doc.length > MAX_DOC) return J({ error: 'doc must be a JSON string under 2MB' }, 400);
+  let parsed;
+  try { parsed = JSON.parse(b.doc); } catch { return J({ error: 'doc is not valid JSON' }, 400); }
+  if (!parsed || parsed.id !== b.id) return J({ error: 'doc.id must match id' }, 400);
+  if (b.name != null && (typeof b.name !== 'string' || b.name.length > 300)) return J({ error: 'invalid name' }, 400);
   const now = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO resorts (id, name, doc, updated_at, updated_by)

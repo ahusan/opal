@@ -15,6 +15,8 @@ export async function onRequestGet({ env }) {
 export async function onRequestPut({ env, request }) {
   const b = await request.json().catch(() => null);
   if (!b || !b.doc) return J({ error: 'doc required' }, 400);
+  if (typeof b.doc !== 'string' || b.doc.length > 1024 * 1024) return J({ error: 'doc must be a JSON string under 1MB' }, 400);
+  try { JSON.parse(b.doc); } catch { return J({ error: 'doc is not valid JSON' }, 400); }
   await env.DB.prepare(
     `INSERT INTO app_config (id, doc) VALUES ('global', ?1)
      ON CONFLICT(id) DO UPDATE SET doc = ?1`
