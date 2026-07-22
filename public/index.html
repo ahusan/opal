@@ -1483,10 +1483,18 @@ function doAddField(secId){
 }
 function removeField(secId,fId){
   const resort=S.resorts[S.activeResortId];if(!resort)return;
+  const fields=getSecFields(resort,secId);
+  const f=fields.find(f=>f.id===fId);if(!f)return;
+  openModal(`<h3>Delete question</h3>
+    <p>Delete <strong>${eh(f.label||'this question')}</strong> from this section <strong>for every resort</strong>? Answers already entered for it will no longer be shown.</p>
+    <div class="ma"><button onclick="closeModal()">Cancel</button><button class="bd" onclick="doRemoveField('${secId}','${fId}')">Delete question</button></div>`);
+}
+function doRemoveField(secId,fId){
+  const resort=S.resorts[S.activeResortId];if(!resort)return;
   ensureSecDef(resort,secId);
   const fields=getSecFields(resort,secId);
   const idx=fields.findIndex(f=>f.id===fId);if(idx>-1)fields.splice(idx,1);
-  saveS();renderForm();toast('Field removed');
+  saveS();closeModal();renderForm();toast('Question deleted');
 }
 
 // ══ REPEATING SECTIONS ═══════════════════════════════════════════════════════
