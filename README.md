@@ -161,3 +161,20 @@ that cache on first load.)
   save wins on that one resort only.
 - If the network is down, the indicator shows **● Offline — saved locally** and retries
   on the next edit; nothing is lost.
+
+## Disaster recovery — D1 Time Travel
+
+D1 keeps **30 days of point-in-time history automatically** (no setup needed). If data
+is ever lost or corrupted (bad import, accidental "Clear all data", bug):
+
+```bash
+# See the current restore point / bookmark
+npx wrangler d1 time-travel info resort-data
+
+# Restore the database to how it was at a specific moment (UTC)
+npx wrangler d1 time-travel restore resort-data --timestamp=2026-07-22T10:00:00Z
+```
+
+Restore as soon as possible after the incident — writes made *after* the restore point
+are lost, and history only goes back 30 days. Note R2 images are not covered by Time
+Travel; deleted images are gone (the app only deletes them when a resort is deleted).
