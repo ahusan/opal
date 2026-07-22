@@ -810,6 +810,12 @@ let _dirtyResorts=new Set(),_dirtyConfig=false,_syncTimer=null,_syncing=false;
 // we replay it on next startup instead of letting the server copy overwrite the edit.
 function savePending(){try{localStorage.setItem('mrs_pending',JSON.stringify({r:[..._dirtyResorts],c:_dirtyConfig}));}catch(e){}}
 function loadPending(){try{const p=JSON.parse(localStorage.getItem('mrs_pending')||'null');if(p){(p.r||[]).forEach(id=>_dirtyResorts.add(id));if(p.c)_dirtyConfig=true;}}catch(e){}}
+// _stamps[id] = the server updated_at we last saw per resort — sent as `base` on
+// every push so the server can 409 instead of letting a stale tab overwrite a
+// teammate's newer edit. _meta[id] = {by,at} for the "last edited" display.
+let _stamps={},_meta={};
+function saveStamps(){try{localStorage.setItem('mrs_stamps',JSON.stringify(_stamps));}catch(e){}}
+function loadStamps(){try{_stamps=JSON.parse(localStorage.getItem('mrs_stamps')||'{}')||{};}catch(e){_stamps={};}}
 function scheduleSync(){
   if(!REMOTE)return;
   if(S.activeResortId){
@@ -831,7 +837,13 @@ async function flushSync(){
   try{
     for(const id of ids){
       const r=S.resorts[id];if(!r)continue;
-      await api('PUT','/resorts',{id:r.id,name:r.name,doc:JSON.stringify(r)});
+      try{
+        const res=await api('PUT','/resorts',{id:r.id,name:r.name,doc:JSON.stringify(r),base:_stamps[id]!==undefined?_stamps[id]:null});
+        _stamps[id]=res.updated_at;_meta[id]={by:'you',at:res.updated_at};saveStamps();
+      }catch(err){
+        if(err.status===409&&err.body&&err.body.server){showConflict(id,err.body.server);continue;} // conflict flow owns this resort now
+        throw err;
+      }
     }
     if(cfg)await api('PUT','/config',{doc:cfgDoc()});
     setSyncStatus('saved');
@@ -845,14 +857,47 @@ async function api(method,path,body){
   const opt={method,headers:{}};
   if(body){opt.headers['Content-Type']='application/json';opt.body=JSON.stringify(body);}
   const res=await fetch(API_BASE+path,opt);
-  if(!res.ok)throw new Error('API '+res.status);
+  if(!res.ok){
+    const err=new Error('API '+res.status);err.status=res.status;
+    try{err.body=await res.json();}catch(e){err.body=null;}
+    throw err;
+  }
   const ct=res.headers.get('content-type')||'';
   return ct.includes('json')?res.json():null;
 }
 function remoteDelete(id){
+  delete _stamps[id];delete _meta[id];saveStamps();
   if(!REMOTE)return;
   api('DELETE','/resorts?id='+encodeURIComponent(id)).catch(()=>{});
   api('DELETE','/media/'+encodeURIComponent(id)).catch(()=>{}); // purge the resort's R2 images
+}
+// ── Conflict resolution: a teammate saved this resort after we last pulled it ──
+let _conflict=null;
+function showConflict(id,server){
+  let sv=null;try{sv=JSON.parse(server.doc);}catch(e){}
+  _conflict={id,server,sv};
+  const name=(S.resorts[id]&&S.resorts[id].name)||(sv&&sv.name)||id;
+  const who=server.updated_by||'a teammate';
+  const when=server.updated_at?new Date(server.updated_at).toLocaleString():'';
+  openModal(`<h3>⚠️ Edit conflict — ${eh(name)}</h3>
+    <p><strong>${eh(who)}</strong> saved changes to this resort (${eh(when)}) while you had unsaved edits. Which version should the team keep?</p>
+    <div class="ma"><button onclick="resolveConflict('theirs')">Their version (discard my edits)</button>
+    <button class="bp2" onclick="resolveConflict('mine')">My version (overwrite theirs)</button></div>`);
+}
+function resolveConflict(which){
+  const c=_conflict;if(!c)return;_conflict=null;closeModal();
+  _stamps[c.id]=c.server.updated_at;
+  _meta[c.id]={by:c.server.updated_by,at:c.server.updated_at};
+  if(which==='mine'){
+    _dirtyResorts.add(c.id);saveStamps();savePending();flushSync(); // re-push on top of their stamp
+  }else{
+    if(c.sv)S.resorts[c.id]=c.sv;
+    _dirtyResorts.delete(c.id);saveStamps();savePending();
+    try{localStorage.setItem('mrs_v6',JSON.stringify(S));}catch(e){}
+    renderSidebar();
+    if(S.activeResortId===c.id)openResort(c.id);
+    setSyncStatus('saved');
+  }
 }
 function setSyncStatus(s){
   const el=document.getElementById('syncStatus');if(!el)return;
@@ -866,18 +911,30 @@ async function loadRemote(){
   const cfg=await api('GET','/config');
   const haveLocal=Object.keys(S.resorts||{}).length>0;
   if((!rows||!rows.length)&&haveLocal){
-    // Server empty but local cache has data → seed the DB (first-run migration).
-    for(const r of Object.values(S.resorts))await api('PUT','/resorts',{id:r.id,name:r.name,doc:JSON.stringify(r)});
-    await api('PUT','/config',{doc:cfgDoc()});
+    // Server empty but this browser has data. Ask before uploading — a silent
+    // auto-seed would resurrect everything from any stale tab right after a
+    // deliberate "Clear all data".
+    const n=Object.keys(S.resorts).length;
+    openModal(`<h3>Shared database is empty</h3>
+      <p>This browser has <strong>${n} resort(s)</strong> saved locally. Upload them to the shared database so the whole team sees them?</p>
+      <div class="ma"><button onclick="closeModal()">Not now (keep local only)</button>
+      <button class="bp2" onclick="closeModal();seedRemote()">Upload ${n} resort(s)</button></div>`);
     return;
   }
   const local=S.resorts||{};
   const merged={};
-  (rows||[]).forEach(row=>{try{const o=JSON.parse(row.doc);if(o&&o.id)merged[o.id]=o;}catch(e){}});
+  (rows||[]).forEach(row=>{
+    try{const o=JSON.parse(row.doc);if(o&&o.id)merged[o.id]=o;}catch(e){}
+    _meta[row.id]={by:row.updated_by,at:row.updated_at};
+    // Keep the OLD stamp for dirty resorts — pushing them must still conflict-check
+    // against what we actually based our edit on, not what the server has now.
+    if(!_dirtyResorts.has(row.id))_stamps[row.id]=row.updated_at;
+  });
   // A resort with an un-pushed local edit keeps the local copy (it's still queued to push);
   // otherwise the server copy would silently wipe an offline edit on reload.
   _dirtyResorts.forEach(id=>{if(local[id])merged[id]=local[id];});
   S.resorts=merged;
+  saveStamps();
   if(cfg&&cfg.doc){try{
     const c=JSON.parse(cfg.doc);
     S.customSections=c.customSections||[];S.sectionOrder=c.sectionOrder||[];S.hiddenSections=c.hiddenSections||[];
@@ -885,10 +942,21 @@ async function loadRemote(){
   }catch(e){}}
   try{localStorage.setItem('mrs_v6',JSON.stringify(S));}catch(e){}
 }
+async function seedRemote(){
+  try{
+    for(const r of Object.values(S.resorts)){
+      const res=await api('PUT','/resorts',{id:r.id,name:r.name,doc:JSON.stringify(r),base:_stamps[r.id]!==undefined?_stamps[r.id]:null});
+      _stamps[r.id]=res.updated_at;_meta[r.id]={by:'you',at:res.updated_at};
+    }
+    await api('PUT','/config',{doc:cfgDoc()});
+    saveStamps();setSyncStatus('saved');toast('Uploaded to shared database');
+  }catch(e){setSyncStatus('offline');toast('Upload failed — will retry as you edit');}
+}
 async function bootstrap(){
   loadS();                 // hydrate instantly from embedded state / localStorage
   if(REMOTE){
     loadPending();         // edits queued in a previous session (offline close, crash)
+    loadStamps();          // per-resort server versions we last saw (conflict bases)
     try{
       if(_dirtyResorts.size||_dirtyConfig)await flushSync();  // replay before pulling
       await loadRemote();setSyncStatus('saved');
@@ -2126,16 +2194,27 @@ dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('dov');})
 dz.addEventListener('dragleave',()=>dz.classList.remove('dov'));
 dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('dov');const f=e.dataTransfer.files[0];if(f)handleImport({target:{files:[f],value:''}});});
 function clearAllData(){
-  openModal(`<h3>Clear all data</h3><p>Permanently delete all ${Object.keys(S.resorts).length} resort(s)?</p>
-    <div class="ma"><button onclick="closeModal()">Cancel</button><button class="bd" onclick="doClear()">Clear all</button></div>`);
+  const n=Object.keys(S.resorts).length;
+  openModal(`<h3>⚠️ Clear all data</h3>
+    <p>This permanently deletes all <strong>${n} resort(s)</strong> — answers, comments and uploaded images — from the <strong>shared team database</strong>, not just this browser. Everyone loses this data.</p>
+    <p>Download a full backup first if you haven't. To proceed, type <strong>DELETE ALL</strong> below:</p>
+    <div class="mr2"><input type="text" id="clearConfirm" autocomplete="off" placeholder="DELETE ALL"
+      oninput="document.getElementById('clearBtn').disabled=this.value.trim()!=='DELETE ALL'"></div>
+    <div class="ma"><button onclick="closeModal()">Cancel</button>
+    <button class="bd" id="clearBtn" disabled onclick="doClear()">Delete everything</button></div>`);
+  setTimeout(()=>{const e=document.getElementById('clearConfirm');if(e)e.focus();},50);
 }
 function doClear(){
+  const guard=document.getElementById('clearConfirm');
+  if(!guard||guard.value.trim()!=='DELETE ALL')return;
   const ids=Object.keys(S.resorts);
   if(REMOTE){
     api('DELETE','/resorts?all=true').catch(()=>{});
     ids.forEach(id=>api('DELETE','/media/'+encodeURIComponent(id)).catch(()=>{}));
   }
-  S.resorts={};S.activeResortId=null;saveS();closeModal();renderSidebar();showView('home');toast('All data cleared');
+  S.resorts={};S.activeResortId=null;
+  _dirtyResorts.clear();_stamps={};_meta={};savePending();saveStamps();
+  saveS();closeModal();renderSidebar();showView('home');toast('All data cleared');
 }
 
 // ══ UTILS ══════════════════════════════════════════════════════════════════

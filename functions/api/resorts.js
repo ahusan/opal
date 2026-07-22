@@ -30,6 +30,18 @@ export async function onRequestPut({ env, request }) {
   try { parsed = JSON.parse(b.doc); } catch { return J({ error: 'doc is not valid JSON' }, 400); }
   if (!parsed || parsed.id !== b.id) return J({ error: 'doc.id must match id' }, 400);
   if (b.name != null && (typeof b.name !== 'string' || b.name.length > 300)) return J({ error: 'invalid name' }, 400);
+  // Optimistic concurrency: clients send `base` = the updated_at they last saw for
+  // this row (null when they believe it's new). A mismatch means someone else wrote
+  // in between — reject with the server copy so the client can resolve, instead of
+  // silently letting the stalest tab win. Requests without `base` (old clients)
+  // keep the legacy last-write-wins behavior.
+  if ('base' in b) {
+    const row = await env.DB.prepare('SELECT doc, updated_at, updated_by FROM resorts WHERE id = ?1')
+      .bind(b.id).first();
+    if (row && row.updated_at !== b.base) {
+      return J({ error: 'conflict', server: { id: b.id, doc: row.doc, updated_at: row.updated_at, updated_by: row.updated_by } }, 409);
+    }
+  }
   const now = new Date().toISOString();
   await env.DB.prepare(
     `INSERT INTO resorts (id, name, doc, updated_at, updated_by)
