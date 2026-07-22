@@ -153,6 +153,15 @@ The import pushes every resort straight into D1. (If you happen to open the new 
 a browser that already has local data and the DB is empty, it auto-seeds the DB from
 that cache on first load.)
 
+## Entering data
+
+The form opens in **entry mode**: only answers, comments, and minimise controls are
+visible. Click **🔧 Edit form** in the topbar to reveal the schema tools (rename or
+delete questions, add fields/options/sections) and **✅ Done editing** to hide them
+again. While entering: typing saves continuously (no need to click away), **Enter**
+jumps to the next field, each tab shows its completion count, and Prev/Next buttons
+at the bottom of a section move you through the survey in order.
+
 ## How sync works
 
 - Every edit saves to `localStorage` instantly, then schedules a debounced push (~1.2s).
