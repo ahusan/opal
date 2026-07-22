@@ -1,0 +1,15 @@
+name = "resort-data"
+pages_build_output_dir = "public"
+compatibility_date = "2025-06-01"
+
+# D1 database binding. Create the DB (see README), then paste its id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "resort-data"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# R2 bucket for resort images (originals + thumbnails). Create the bucket
+# (see README "Image storage") — no id needed, just the name.
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "resort-media"

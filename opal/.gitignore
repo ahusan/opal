@@ -1,0 +1,13 @@
+node_modules/
+.wrangler/
+.dev.vars
+dist/
+media/*
+media/**
+media/**/*
+media/**/**
+media/**/**/*
+media/**/**/**
+media/**/**/**/*
+media/**/**/**/**
+media/**/**/**/**/*
