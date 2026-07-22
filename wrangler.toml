@@ -6,7 +6,7 @@ compatibility_date = "2025-06-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "resort-data"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "721da7c8-6439-4744-8514-561774d2a81c"
 
 # R2 bucket for resort images (originals + thumbnails). Create the bucket
 # (see README "Image storage") — no id needed, just the name.
