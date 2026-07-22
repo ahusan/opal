@@ -355,6 +355,7 @@ select.qinput{background:white;}
     <div class="view active" id="view-form">
       <div class="topbar">
         <div class="tb-title" id="formTitle">Bodumas Resort and Spa</div>
+        <div id="formMeta" style="font-size:11px;color:var(--text3);margin-right:10px;white-space:nowrap;"></div>
         <button class="tb-btn wrn" onclick="showRenameModal()">✏ Rename</button>
         <button class="tb-btn" onclick="showView('table')">📊 All resorts</button>
         <button class="tb-btn pri" onclick="saveToFile()">💾 Save to file</button>
@@ -846,7 +847,7 @@ async function flushSync(){
       }
     }
     if(cfg)await api('PUT','/config',{doc:cfgDoc()});
-    setSyncStatus('saved');
+    setSyncStatus('saved');renderFormMeta();
   }catch(e){
     // Re-mark dirty so the next change retries; data is safe in localStorage meanwhile.
     ids.forEach(id=>_dirtyResorts.add(id));if(cfg)_dirtyConfig=true;
@@ -965,6 +966,41 @@ async function bootstrap(){
   }else{setSyncStatus('file');}
   renderSidebar();
 }
+// ── Background refresh: pull teammates' changes every 30s. Dirty (locally
+// edited, un-pushed) resorts are never touched; the open resort re-renders
+// only if it changed remotely and has no local edits pending. ──
+async function refreshRemote(){
+  if(!REMOTE||_syncing||document.hidden||_conflict)return;
+  try{
+    const rows=await api('GET','/resorts');
+    let changed=false,activeChanged=false;
+    const seen=new Set();
+    (rows||[]).forEach(row=>{
+      seen.add(row.id);
+      _meta[row.id]={by:row.updated_by,at:row.updated_at};
+      if(_dirtyResorts.has(row.id))return;
+      if(_stamps[row.id]===row.updated_at)return;
+      try{
+        const o=JSON.parse(row.doc);
+        if(o&&o.id){S.resorts[o.id]=o;_stamps[o.id]=row.updated_at;changed=true;if(o.id===S.activeResortId)activeChanged=true;}
+      }catch(e){}
+    });
+    Object.keys(S.resorts).forEach(id=>{ // deleted remotely → remove, unless a local edit is pending
+      if(!seen.has(id)&&!_dirtyResorts.has(id)){
+        delete S.resorts[id];delete _stamps[id];delete _meta[id];changed=true;
+        if(S.activeResortId===id){S.activeResortId=null;showView('home');}
+      }
+    });
+    if(changed){
+      saveStamps();
+      try{localStorage.setItem('mrs_v6',JSON.stringify(S));}catch(e){}
+      renderSidebar();
+      if(activeChanged&&S.activeResortId){openResort(S.activeResortId);toast("Updated with a teammate's changes");}
+    }
+    renderFormMeta();
+  }catch(e){}
+}
+setInterval(refreshRemote,30000);
 // Canonical list of all sections in user-defined order (falls back to natural order)
 function allSecs(){
   const natural=[...BS,...S.customSections].filter(s=>!S.hiddenSections.includes(s.id));
@@ -1053,11 +1089,27 @@ function doDelete(){
   remoteDelete(id);
   saveS();closeModal();renderSidebar();showView('home');toast('Resort deleted');
 }
+function relTime(iso){
+  if(!iso)return'';
+  const s=(Date.now()-new Date(iso).getTime())/1000;
+  if(s<60)return'just now';
+  if(s<3600)return Math.floor(s/60)+'m ago';
+  if(s<86400)return Math.floor(s/3600)+'h ago';
+  if(s<7*86400)return Math.floor(s/86400)+'d ago';
+  return new Date(iso).toLocaleDateString();
+}
+function renderFormMeta(){
+  const el=document.getElementById('formMeta');if(!el)return;
+  const m=S.activeResortId&&_meta[S.activeResortId];
+  el.textContent=m&&m.at?`✎ ${m.by==='you'?'you':(m.by||'unknown').split('@')[0]} · ${relTime(m.at)}`:'';
+  el.title=m&&m.at?`Last edited by ${m.by||'unknown'} — ${new Date(m.at).toLocaleString()}`:'';
+}
 function openResort(id){
   S.activeResortId=id;const r=S.resorts[id];
   if(!r.comments)r.comments={};
   if(!r.data)r.data={};if(!r.repeating)r.repeating={};
   document.getElementById('formTitle').textContent=r.name;
+  renderFormMeta();
   const secs=allSecs();
   if(!S.activeSection||!secs.find(s=>s.id===S.activeSection))S.activeSection=secs[0].id;
   buildTabs();renderForm();showView('form');renderSidebar();

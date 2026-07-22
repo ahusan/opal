@@ -81,25 +81,23 @@ gets each writer's email in `updated_by` automatically.
 
 ---
 
-## Step 3 — Migrate existing data ⚠️ READ THIS
+## Step 3 — Migrate existing data
 
-The old artifact's data lives in one browser's `localStorage`. **The built-in
-Export→Import is currently LOSSY** (see TODO item 1 below) — it only restores name +
-comments, dropping every answer. So either:
+Use **🗄️ Download full backup (.json)** in the new app's Export view — it's lossless
+(answers, comments, gallery structure, section layout) and re-imports via the same
+Import card. Alternatively, open the deployed app in the browser that holds the old
+data while the DB is empty — it will *ask* before seeding D1 from that cache.
 
-- **Do TODO item 1 first** (add lossless backup/restore), then Export full backup from
-  the old app → Import into the new one; **or**
-- Open the *new* deployed app in the *same browser* that holds the old data while the DB
-  is still empty — the app auto-seeds D1 from that cache on first load. (Only works if
-  same browser/origin has the data.)
-
-Don't tell anyone to rely on Export→Import until item 1 is done.
+(The old flat .json/.ndjson exports are for Elasticsearch pipelines only; importing
+them creates name+comment shells and never overwrites a resort that has data.)
 
 ---
 
 ## TODO — improvements before go-live
 
-Ordered by priority. Items 1 & 2 are data-loss bugs — do them first.
+**Status 2026-07-22: items 1–7 are DONE** (see git log on the `hardening` branch);
+item 8 is partially done — payload validation shipped, Time Travel documented in
+README (it's automatic), scheduled backup export still open.
 
 ### 🔴 1. Make backup/restore lossless  (file: `public/index.html`)
 - **Problem:** `flatR()` flattens resorts for export; `handleImport()` only reads
