@@ -344,6 +344,20 @@ select.qinput{background:white;}
 .mg-set-chip button{border:none;background:none;cursor:pointer;font-size:11px;padding:0 2px;color:var(--text3);}
 .mg-set-chip button:hover{color:var(--accent);}
 .mg-set-chip button.del:hover{color:var(--danger);}
+/* per-section related-images panel */
+.sp-wrap{border:1px solid var(--border);border-radius:var(--rl);margin:0 0 14px;background:var(--surface);}
+.sp-hdr{display:flex;align-items:center;gap:7px;padding:9px 12px;font-size:var(--fs-sm);font-weight:600;cursor:pointer;user-select:none;}
+.sp-q{margin-left:auto;font-weight:400;font-size:var(--fs-xs);color:var(--text3);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;}
+.sp-q:hover{color:var(--accent);}
+.sp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;padding:4px 12px 12px;}
+.sp-card{position:relative;}
+.sp-th{aspect-ratio:1;border-radius:var(--r);overflow:hidden;background:var(--surface2);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.sp-th img{width:100%;height:100%;object-fit:cover;display:block;}
+.sp-nm{font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;}
+.sp-add{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:13px;line-height:1;display:none;align-items:center;justify-content:center;}
+.sp-card:hover .sp-add{display:flex;}
+.sp-none{padding:0 12px 12px;font-size:var(--fs-xs);color:var(--text3);}
+.sp-suggest{display:flex;align-items:center;gap:8px;padding:7px 10px;margin:0 0 8px;background:var(--al);border-radius:var(--r);font-size:var(--fs-xs);}
 /* ── Entry vs Build mode: form-editing chrome is hidden while entering data ── */
 body.entry .bo{display:none!important;}
 /* ── Per-section completion badge on tabs ── */
@@ -1197,6 +1211,7 @@ function renderForm(){
     ${sec.type==='repeating'?`<button class="sec-hdr-btn bo" onclick="addRepFieldModal('${sec.id}')">+ Column</button>`:''}
     ${sec.type==='faq'?`<button class="sec-hdr-btn bo" onclick="addFaqItem('${sec.id}')">+ Question</button>`:''}
   </div>`;
+  if(sec.type==='fixed'||sec.type==='repeating')html+=mgSecPanelHTML(resort,sec);
 
   if(sec.type==='fixed'){
     html+=`<div>`;
@@ -2673,6 +2688,60 @@ function mgSecQuery(r,sec){
   const o=mediaOf(r).secQ[sec.id];
   if(o!==undefined&&o!==null)return String(o).trim()||null;
   return MG_SEED[sec.id]||mgTitleSeed(sec.title);
+}
+// ── "Related images" panel: shows gallery images matching the section query ──
+const MG_SP={};
+function mgSpTog(secId){MG_SP[secId]=!MG_SP[secId];renderForm();}
+function mgSecImgs(r,q){return q?mediaOf(r).imgs.filter(i=>mgMatch(q,i.name)):[];}
+function mgSpCardHTML(r,i,secId,fixed){
+  const th=i.st==='ok'?`<img src="${mediaUrl(r.id,i.id,'thumb')}" loading="lazy" alt="" onerror="mgThumbErr(this,'${mediaUrl(r.id,i.id,'orig')}')">`:`<span>🖼</span>`;
+  return`<div class="sp-card" title="${eh(i.name)}">
+    <div class="sp-th" onclick="mgView('${i.id}')">${th}</div>
+    <div class="sp-nm">${eh(i.label||i.name)}</div>
+  </div>`;
+}
+function mgSecPanelHTML(resort,sec){
+  if(sec.type!=='fixed'&&sec.type!=='repeating')return'';
+  const q=mgSecQuery(resort,sec);
+  const imgs=mgSecImgs(resort,q);
+  const open=!!MG_SP[sec.id];
+  let html=`<div class="sp-wrap"><div class="sp-hdr" onclick="mgSpTog('${sec.id}')">
+    <span class="mg-chev">${open?'▾':'▸'}</span> 📷 Related images (${imgs.length})
+    <span class="sp-q" onclick="event.stopPropagation();mgSecQEdit('${sec.id}')" title="Edit the search query that picks these images">✏ ${q?eh(q):'set query…'}</span>
+  </div>`;
+  if(open){
+    if(!imgs.length){
+      html+=`<div class="sp-none">No gallery file names match${q?` <code>${eh(q)}</code>`:''} — ✏ edit the query, or add images in the 🖼️ Image Gallery tab.</div>`;
+    }else{
+      const byCat={};imgs.forEach(i=>{(byCat[i.cat||'']=byCat[i.cat||'']||[]).push(i);});
+      html+=Object.keys(byCat).map(cid=>`<div class="gp-cat-t" style="padding:0 12px;">📂 ${eh(cid?mgCatPath(resort,cid):'Uncategorised')}</div>
+        <div class="sp-grid">${byCat[cid].map(i=>mgSpCardHTML(resort,i,sec.id,sec.type==='fixed')).join('')}</div>`).join('');
+    }
+  }
+  html+=`</div>`;
+  return html;
+}
+function mgSecQEdit(secId){
+  const r=S.resorts[S.activeResortId];const sec=getSecDef(secId,r);
+  const cur=mgSecQuery(r,sec)||'';
+  const def=MG_SEED[secId]||mgTitleSeed(sec.title)||'';
+  openModal(`<h3>Section image query</h3>
+    <div class="mr2"><label>Search terms (every term must appear in the file name; "quotes" group a phrase)</label>
+    <input type="text" id="mgsq" value="${eh(cur)}" placeholder='e.g. f&b "beach dinner"' onkeydown="if(event.key==='Enter')mgSecQSave('${secId}')"></div>
+    <div class="ma"><button onclick="closeModal()">Cancel</button>
+    ${def?`<button onclick="mgSecQReset('${secId}')">Reset to default (${eh(def)})</button>`:''}
+    <button class="bp2" onclick="mgSecQSave('${secId}')">Save</button></div>`);
+  setTimeout(()=>{const e=document.getElementById('mgsq');e.focus();e.select();},50);
+}
+function mgSecQSave(secId){
+  const r=S.resorts[S.activeResortId];
+  mediaOf(r).secQ[secId]=document.getElementById('mgsq').value.trim();
+  saveS();closeModal();renderForm();toast('Query saved');
+}
+function mgSecQReset(secId){
+  const r=S.resorts[S.activeResortId];
+  delete mediaOf(r).secQ[secId];
+  saveS();closeModal();renderForm();toast('Query reset to default');
 }
 function mgCatHTML(r,c,depth){
   const open=MG_OPEN[c.id]!==false;
