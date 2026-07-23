@@ -105,11 +105,17 @@
 
 ### 6. One-click attach (unchanged from rev 2)
 
-- `＋` on panel thumbnails only when the section (fixed) / current entry
-  (repeating) has a `type:'images'` question; appends `{g: imgId}` with the
-  picker's dedupe. Repeating sections (Bars, Restaurants, Villa types)
-  match entry names against filenames ("Flores" ↔ `… - Flores - 6.jpg`) for
-  a "Suggested for this entry" row with **Attach all**.
+- `＋` on panel thumbnails in every **fixed** section. If the section has a
+  `type:'images'` question, the image is appended there (`{g: imgId}`, with
+  the picker's dedupe). If it has none — management explicitly wants photo
+  tagging in the fixed sections "Watersports…/Kids Club/Teens Club",
+  "Spa And Wellness" and "Resort Facilities", which currently have no image
+  question — the first attach auto-creates a global "Photos" image question
+  in that section (`{id:'cf'+Date.now(),label:'Photos',type:'images'}`, the
+  same as adding it manually via "+ Field") and announces it with a toast.
+- **Repeating** sections (Bars, Restaurants, Villa types) attach per entry:
+  entry names are matched against filenames ("Flores" ↔ `… - Flores - 6.jpg`)
+  for a "Suggested for this entry" row with **Attach all**.
 - Multiple image questions in scope → attach to the first; the picker modal
   remains for precise placement.
 

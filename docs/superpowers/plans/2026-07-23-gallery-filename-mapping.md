@@ -16,6 +16,7 @@
 - Search semantics: whitespace-separated terms, `"quoted phrases"` group, every term a case-insensitive substring of the filename, ANDed. Empty query matches all (search box); a null/empty **section** query matches nothing.
 - No auto-attach: images enter answers only via explicit clicks.
 - Match the file's code style: compact vanilla JS, template-literal HTML, `eh()` for escaping user text, `openModal`/`closeModal`/`toast`/`saveS` for UI plumbing.
+- **Auto-save everything** (commitment to management for the deployed app, 2026-07-23): every mutation this plan introduces — photoset create/edit/delete, section query overrides, attached images, the auto-created "Photos" question — must go through `saveS()` in the same call that changes state (never a separate "save" button), so it persists via localStorage + the D1 sync/offline queue exactly like existing answers.
 - After every `public/index.html` edit, run the parse check: `node tests/parse.test.js` (created in Task 1).
 - Run all tests with: `for f in tests/*.test.js; do node "$f" || exit 1; done`
 
@@ -711,7 +712,7 @@ git commit -m "feat: section image-query resolver (seeds + title fallback + over
 
 **Interfaces:**
 - Consumes: `mgSecQuery`, `mgMatch`, `mediaOf`, `mgCatPath`, `mediaUrl`, `mgThumbErr`, `mgView`, `getSecDef`, `openModal`/`saveS`/`renderForm`/`toast`/`eh`.
-- Produces: `MG_SP` (open-state), `mgSpTog(secId)`, `mgSecImgs(r,q)` → img[], `mgSecPanelHTML(resort,sec)` → string, `mgSecQEdit/mgSecQSave/mgSecQReset(secId)`. Task 9 adds the `＋` button via `mgSpCardHTML`'s `fId` argument — keep its signature `mgSpCardHTML(r,i,secId,fId)`.
+- Produces: `MG_SP` (open-state), `mgSpTog(secId)`, `mgSecImgs(r,q)` → img[], `mgSecPanelHTML(resort,sec)` → string, `mgSecQEdit/mgSecQSave/mgSecQReset(secId)`. Task 9 adds the `＋` button via `mgSpCardHTML`'s `fixed` argument — keep its signature `mgSpCardHTML(r,i,secId,fixed)`.
 
 - [ ] **Step 1: Implement panel functions** — add after `mgSecQuery`:
 
@@ -720,7 +721,7 @@ git commit -m "feat: section image-query resolver (seeds + title fallback + over
 const MG_SP={};
 function mgSpTog(secId){MG_SP[secId]=!MG_SP[secId];renderForm();}
 function mgSecImgs(r,q){return q?mediaOf(r).imgs.filter(i=>mgMatch(q,i.name)):[];}
-function mgSpCardHTML(r,i,secId,fId){
+function mgSpCardHTML(r,i,secId,fixed){
   const th=i.st==='ok'?`<img src="${mediaUrl(r.id,i.id,'thumb')}" loading="lazy" alt="" onerror="mgThumbErr(this,'${mediaUrl(r.id,i.id,'orig')}')">`:`<span>🖼</span>`;
   return`<div class="sp-card" title="${eh(i.name)}">
     <div class="sp-th" onclick="mgView('${i.id}')">${th}</div>
@@ -740,10 +741,9 @@ function mgSecPanelHTML(resort,sec){
     if(!imgs.length){
       html+=`<div class="sp-none">No gallery file names match${q?` <code>${eh(q)}</code>`:''} — ✏ edit the query, or add images in the 🖼️ Image Gallery tab.</div>`;
     }else{
-      const fId=sec.type==='fixed'?((sec.fields||[]).find(f=>f.type==='images')||{}).id||null:null;
       const byCat={};imgs.forEach(i=>{(byCat[i.cat||'']=byCat[i.cat||'']||[]).push(i);});
       html+=Object.keys(byCat).map(cid=>`<div class="gp-cat-t" style="padding:0 12px;">📂 ${eh(cid?mgCatPath(resort,cid):'Uncategorised')}</div>
-        <div class="sp-grid">${byCat[cid].map(i=>mgSpCardHTML(resort,i,sec.id,fId)).join('')}</div>`).join('');
+        <div class="sp-grid">${byCat[cid].map(i=>mgSpCardHTML(resort,i,sec.id,sec.type==='fixed')).join('')}</div>`).join('');
     }
   }
   html+=`</div>`;
@@ -819,8 +819,8 @@ git commit -m "feat: per-section related-images panel driven by editable search 
 - Test: `tests/entry-suggest.test.js`
 
 **Interfaces:**
-- Consumes: `imgArr(secId,fId,idx)` (existing — answer array holding `{g:imgId}` refs), `imgRerender`, `mgSpCardHTML(r,i,secId,fId)` (Task 8), `mediaOf`, `saveS`, `toast`.
-- Produces: `mgAttach(secId,fId,idx,imgId)`, `mgAttachAll(secId,fId,idx,idsCsv)`, `mgEntrySuggest(r,name)` → img[].
+- Consumes: `imgArr(secId,fId,idx)` (existing — answer array holding `{g:imgId}` refs), `imgRerender`, `mgSpCardHTML(r,i,secId,fixed)` (Task 8), `ensureSecDef(resort,secId)` + `getSecFields(resort,secId)` (existing global-field plumbing), `mediaOf`, `saveS`, `toast`.
+- Produces: `mgAttach(secId,fId,idx,imgId)`, `mgAttachFixed(secId,imgId)` (auto-creates a "Photos" image question when the fixed section has none — management wants photo tagging in "Watersports…/Kids Club/Teens Club", "Spa And Wellness", "Resort Facilities", which ship without one), `mgAttachAll(secId,fId,idx,idsCsv)`, `mgEntrySuggest(r,name)` → img[].
 
 - [ ] **Step 1: Write the failing test**
 
@@ -863,6 +863,21 @@ function mgAttach(secId,fId,idx,imgId){
   if(a.some(e=>e&&typeof e==='object'&&e.g===imgId)){toast('Already attached');return;}
   a.push({g:imgId});saveS();imgRerender(secId,fId,idx);toast('Image attached');
 }
+// Fixed sections without an image question get one automatically on first
+// attach — same as adding "Photos" via "+ Field", just seamless (asked for
+// the Watersports/Kids Club, Spa And Wellness and Resort Facilities sections).
+function mgEnsureImagesField(secId){
+  const r=S.resorts[S.activeResortId];
+  ensureSecDef(r,secId);
+  const fields=getSecFields(r,secId);
+  let f=fields.find(x=>x.type==='images');
+  if(!f){f={id:'cf'+Date.now(),label:'Photos',type:'images'};fields.push(f);toast('Added a “Photos” question to this section');}
+  return f.id;
+}
+function mgAttachFixed(secId,imgId){
+  mgAttach(secId,mgEnsureImagesField(secId),-1,imgId);
+  renderForm();
+}
 function mgAttachAll(secId,fId,idx,ids){
   const a=imgArr(secId,fId,idx);let n=0;
   String(ids||'').split(',').filter(Boolean).forEach(id=>{
@@ -880,7 +895,7 @@ function mgEntrySuggest(r,name){
 **(b)** In `mgSpCardHTML` (Task 8), add the ＋ button before the closing `</div>` of `.sp-card`:
 
 ```js
-    ${fId?`<button class="sp-add" title="Attach to this section's image question" onclick="mgAttach('${secId}','${fId}',-1,'${i.id}')">＋</button>`:''}
+    ${fixed?`<button class="sp-add" title="Attach to this section's image question" onclick="mgAttachFixed('${secId}','${i.id}')">＋</button>`:''}
 ```
 
 **(c)** In `renderRepSec`, inside the `items.forEach` loop, right after the `<div class="rep-body" …>` opening tag line, add the suggestion row (a human click is always required — no auto-attach):
@@ -926,7 +941,9 @@ Run: `npx wrangler pages dev public --port 8788` then verify in the browser:
 1. Gallery: import `media/Ananea Madivaru Maldives/Image Gallery` → categories match the FILENAME hierarchy (e.g. Kids Club images land under `Facilities / Activities / Kids Club`), cards show short labels, hover shows full names.
 2. Search `f&b` → only F&B files; `f&b flores` narrows; `💾 Save as photoset` → chip appears with live count; ✏ edit changes results; ✕ deletes chip only.
 3. Bars section: `📷 Related images` lists F&B images; ✏ shows `f&b`; a restaurant entry named `Flores` shows the 💡 suggestion row; Attach all links the image; re-clicking reports 0 attached (dedupe).
-4. Curl sanity: `curl -s localhost:8788 | grep -c mgParseName` → ≥1.
+4. Spa And Wellness (fixed section, no image question): panel shows wellness images; clicking ＋ on one both creates a "Photos" question (toast) and attaches the image; a second ＋ on another image reuses the same question.
+5. **Auto-save round-trip** (promised to management): create a photoset, edit a section query, and attach an image — then hard-reload the page (and, if a second browser/profile is handy, open the app there too). All three changes must reappear without any manual save action, proving they synced to D1 rather than living only in the tab's localStorage.
+6. Curl sanity: `curl -s localhost:8788 | grep -c mgParseName` → ≥1.
 
 - [ ] **Step 3: Update README** — find the sentence in `README.md` that describes the Image Gallery section (`grep -n "Image Gallery" README.md`) and replace/extend it with this paragraph (adjust surrounding markdown to fit):
 
