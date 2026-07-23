@@ -2639,6 +2639,36 @@ function mgFilesPicked(ev){
   if(!files.length)return;
   mgAddFiles(files.map(f=>({file:f,cat:MG_TARGET})));
 }
+// Map a file's relative path to gallery category segments. Wrapper folders
+// ("media", the resort's folder — whatever it's called, "Image Gallery") must not
+// become categories: cut at the DEEPEST known wrapper segment anywhere in the
+// path, so the tree below it mirrors the folder structure exactly no matter
+// which ancestor folder the user picked. Also reports the resort folder's name
+// (the segment just above "Image Gallery"/"images") for filename cleanup.
+function mgImportParts(rel,rn){
+  const parts=String(rel||'').split('/');
+  parts.pop();                                   // drop the file name
+  let cut=-1,resortSeg=null;
+  for(let i=0;i<parts.length;i++){
+    const p=cleanSeg(parts[i]).toLowerCase();
+    if(p==='media'||p==='image gallery'||p==='images'||p==='image galleries'||(rn&&p===rn)){
+      cut=i;
+      if((p==='image gallery'||p==='images'||p==='image galleries')&&i>0)resortSeg=cleanSeg(parts[i-1]);
+    }
+  }
+  if(cut>=0)parts.splice(0,cut+1);
+  else if(parts.length)parts.shift();            // no wrapper anywhere — drop the picked folder
+  return{parts:parts.map(cleanSeg).filter(Boolean),resortSeg};
+}
+// Proper display name: collapse a duplicated leading token and strip redundant
+// "<Resort Name> - " prefixes (the export convention repeats them in every file).
+function mgProperName(name,cands){
+  const toks=String(name||'').split(' - ');
+  const low=(cands||[]).filter(Boolean).map(c=>String(c).toLowerCase().trim());
+  while(toks.length>1&&toks[0].trim().toLowerCase()===toks[1].trim().toLowerCase())toks.shift();
+  while(toks.length>1&&low.includes(toks[0].trim().toLowerCase()))toks.shift();
+  return toks.join(' - ')||String(name||'');
+}
 function mgImportFolder(ev){
   const all=[...ev.target.files];ev.target.value='';
   const r=S.resorts[S.activeResortId];if(!r)return;
@@ -2646,26 +2676,22 @@ function mgImportFolder(ev){
   const files=all.filter(f=>f.type.startsWith('image/')&&!f.name.startsWith('.'));
   if(!files.length){toast('No images found in that folder');return;}
   const jobs=files.map(f=>{
-    let parts=(f.webkitRelativePath||f.name).split('/');
-    parts.pop();                                  // drop the file name
-    if(parts.length)parts.shift();                // drop the folder the user picked
-    // drop wrapper segments: "media", "Image Gallery", or the resort's own name
-    while(parts.length){
-      const p=cleanSeg(parts[0]).toLowerCase();
-      if(p==='media'||p==='image gallery'||p==='images'||(rn&&p===rn))parts.shift();else break;
-    }
-    return{file:f,cat:parts.length?mgEnsurePath(r,parts):null};
+    const{parts,resortSeg}=mgImportParts(f.webkitRelativePath||f.name,rn);
+    return{file:f,cat:parts.length?mgEnsurePath(r,parts):null,
+           name:mgProperName(f.name,[r.name,resortSeg])};
   });
   mgAddFiles(jobs);
 }
-// jobs: [{file, cat}] — creates entries, saves, renders, then uploads in background
+// jobs: [{file, cat, name?}] — creates entries, saves, renders, then uploads in background
 function mgAddFiles(jobs){
   const r=S.resorts[S.activeResortId];if(!r)return null;
   const m=mediaOf(r);let added=0,skipped=0;const newIds=[];
   jobs.forEach(j=>{
-    const dup=m.imgs.find(im=>(im.cat||null)===(j.cat||null)&&im.name.toLowerCase()===j.file.name.toLowerCase());
+    const nm=j.name||j.file.name;
+    const dup=m.imgs.find(im=>(im.cat||null)===(j.cat||null)&&
+      (im.name.toLowerCase()===nm.toLowerCase()||im.name.toLowerCase()===j.file.name.toLowerCase()));
     if(dup){skipped++;return;}
-    const im={id:mgId('i'),name:j.file.name,cat:j.cat||null,ct:j.file.type,size:j.file.size,
+    const im={id:mgId('i'),name:nm,cat:j.cat||null,ct:j.file.type,size:j.file.size,
               st:REMOTE?'up':'ref',at:new Date().toISOString()};
     m.imgs.push(im);newIds.push(im.id);added++;
     if(REMOTE)upEnqueue({resortId:r.id,imgId:im.id,file:j.file});
