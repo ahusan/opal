@@ -2513,6 +2513,17 @@ function mgParseName(name){
   const label=segs[segs.length-1].replace(/\.[A-Za-z0-9]+$/,'').trim()||segs[segs.length-1];
   return{cats:segs.slice(0,-1).map(cleanSeg).filter(Boolean),label,stripped};
 }
+// Lightroom-style filename search (the team's mental model): every term must
+// appear in the original filename, case-insensitive; "quotes" group a phrase.
+function mgQTerms(q){
+  const out=[];const re=/"([^"]*)"|(\S+)/g;let m;
+  while((m=re.exec(String(q||''))))if((m[1]||m[2]||'').trim())out.push((m[1]||m[2]).trim().toLowerCase());
+  return out;
+}
+function mgMatch(q,name){
+  const n=String(name||'').toLowerCase();
+  return mgQTerms(q).every(t=>n.includes(t));
+}
 function mgId(p){return p+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function mgEnsurePath(r,parts){
   let parent=null;
