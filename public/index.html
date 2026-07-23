@@ -333,6 +333,17 @@ select.qinput{background:white;}
 .gp-nm{font-size:10px;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text2,#444);}
 .gp-cat-t{font-size:var(--fs-xs);font-weight:600;color:var(--text3);margin-top:8px;}
 .gp-wrap{max-height:52vh;overflow-y:auto;margin:8px 0;}
+/* gallery search + photosets */
+.mg-search-row{display:flex;gap:8px;margin:12px 0 8px;}
+.mg-search{flex:1;padding:8px 11px;border:1px solid var(--border);border-radius:var(--r);font-size:var(--fs-sm);background:var(--surface);color:var(--text);outline:none;}
+.mg-search:focus{border-color:var(--accent);}
+.mg-sets{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;}
+.mg-set-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid var(--border);border-radius:14px;font-size:var(--fs-xs);cursor:pointer;background:var(--surface);}
+.mg-set-chip:hover{border-color:var(--accent);background:var(--al);}
+.mg-set-n{color:var(--text3);}
+.mg-set-chip button{border:none;background:none;cursor:pointer;font-size:11px;padding:0 2px;color:var(--text3);}
+.mg-set-chip button:hover{color:var(--accent);}
+.mg-set-chip button.del:hover{color:var(--danger);}
 /* ── Entry vs Build mode: form-editing chrome is hidden while entering data ── */
 body.entry .bo{display:none!important;}
 /* ── Per-section completion badge on tabs ── */
@@ -2556,19 +2567,44 @@ function renderGallerySec(resort){
     <input type="file" id="mgFilesInp" multiple accept="image/*" style="display:none" onchange="mgFilesPicked(event)">
   </div>`;
   if(!REMOTE)html+=`<div class="mg-offline">⚠ You're viewing the standalone HTML file, so images can't be uploaded from here — only file names and the folder structure are recorded. Open the deployed team app (Cloudflare) to upload images and see previews.</div>`;
-  const roots=mgCats(resort,null),rootImgs=mgImgs(resort,null);
-  if(!roots.length&&!rootImgs.length){
-    html+=`<div class="mg-empty"><div style="font-size:30px;">🖼️</div>
-      <strong>No images yet</strong><br>
-      Click <strong>📁 Import media folder…</strong> and pick this resort's media folder<br>
-      (e.g. <em>media / ${eh(resort.name)} / Image Gallery</em>).<br>
-      Sub-folders like <em>Accommodation → Beach Pool Villa</em> or <em>F&amp;B → Flores</em> become categories automatically.</div>`;
-  }else{
-    if(rootImgs.length)html+=`<div class="mg-grid">${rootImgs.map(i=>mgCardHTML(resort,i)).join('')}</div>`;
-    html+=roots.map(c=>mgCatHTML(resort,c,0)).join('');
-  }
+  html+=`<div class="mg-search-row">
+    <input class="mg-search" id="mgSearchInp" placeholder='🔎 Search file names — e.g. f&b "kids club"' value="${eh(MG_QUERY)}" oninput="mgSearch(this.value)">
+    <button class="mg-btn" id="mgSaveSetBtn" style="display:${MG_QUERY.trim()?'inline-block':'none'}" onclick="mgSetSave()">💾 Save as photoset</button>
+  </div>`;
+  html+=`<div id="mgTree">${mgTreeHTML(resort)}</div>`;
   return html;
 }
+let MG_QUERY='';
+function mgTreeHTML(resort){
+  const q=MG_QUERY.trim();
+  if(q){
+    const hits=mediaOf(resort).imgs.filter(i=>mgMatch(q,i.name));
+    if(!hits.length)return`<div class="mg-none">No file names match <code>${eh(q)}</code></div>`;
+    const byCat={};hits.forEach(i=>{(byCat[i.cat||'']=byCat[i.cat||'']||[]).push(i);});
+    return Object.keys(byCat).map(cid=>`<div class="gp-cat-t">📂 ${eh(cid?mgCatPath(resort,cid):'Uncategorised')}</div>
+      <div class="mg-grid">${byCat[cid].map(i=>mgCardHTML(resort,i)).join('')}</div>`).join('');
+  }
+  const roots=mgCats(resort,null),rootImgs=mgImgs(resort,null);
+  if(!roots.length&&!rootImgs.length){
+    return`<div class="mg-empty"><div style="font-size:30px;">🖼️</div>
+      <strong>No images yet</strong><br>
+      Click <strong>📁 Import media folder…</strong> and pick this resort's media folder —
+      a flat folder is fine: categories come from the file names<br>
+      (<em>Resort - Section - … - N.jpg</em>).</div>`;
+  }
+  let html='';
+  if(rootImgs.length)html+=`<div class="mg-grid">${rootImgs.map(i=>mgCardHTML(resort,i)).join('')}</div>`;
+  html+=roots.map(c=>mgCatHTML(resort,c,0)).join('');
+  return html;
+}
+function mgSearch(v){
+  MG_QUERY=v;
+  const t=document.getElementById('mgTree');
+  if(t)t.innerHTML=mgTreeHTML(S.resorts[S.activeResortId]);
+  const b=document.getElementById('mgSaveSetBtn');
+  if(b)b.style.display=v.trim()?'inline-block':'none';
+}
+function mgSetSave(){toast('Photosets arrive in the next change');}
 function mgCatHTML(r,c,depth){
   const open=MG_OPEN[c.id]!==false;
   const imgs=mgImgs(r,c.id),kids=mgCats(r,c.id);
