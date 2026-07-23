@@ -1566,6 +1566,13 @@ function renderRepSec(sec,resort){
       <button class="rep-dup" onclick="dupRepItem('${sec.id}',${idx})">⧉ Duplicate</button>
       <button class="rep-del" onclick="delRepItem('${sec.id}',${idx})">Remove</button>
     </div><div class="rep-body" id="rib_${sec.id}_${idx}" style="display:${min?'none':'block'};">`;
+    const imgF=rfs.find(f=>f.type==='images');
+    if(imgF){
+      const already=new Set((Array.isArray(item[imgF.id])?item[imgF.id]:[]).filter(e=>e&&typeof e==='object'&&e.g).map(e=>e.g));
+      const cand=mgEntrySuggest(resort,nameVal).filter(i=>!already.has(i.id));
+      if(cand.length)html+=`<div class="sp-suggest">💡 ${cand.length} gallery image(s) match “${eh(nameVal)}”
+        <button class="mg-btn" onclick="mgAttachAll('${sec.id}','${imgF.id}',${idx},'${cand.map(i=>i.id).join(',')}')">Attach all</button></div>`;
+    }
     rfs.forEach(f=>{html+=renderRepField(f,item[f.id],sec.id,idx,item);});
     html+=`</div></div>`;
   });
@@ -2698,6 +2705,7 @@ function mgSpCardHTML(r,i,secId,fixed){
   return`<div class="sp-card" title="${eh(i.name)}">
     <div class="sp-th" onclick="mgView('${i.id}')">${th}</div>
     <div class="sp-nm">${eh(i.label||i.name)}</div>
+    ${fixed?`<button class="sp-add" title="Attach to this section's image question" onclick="mgAttachFixed('${secId}','${i.id}')">＋</button>`:''}
   </div>`;
 }
 function mgSecPanelHTML(resort,sec){
@@ -2742,6 +2750,39 @@ function mgSecQReset(secId){
   const r=S.resorts[S.activeResortId];
   delete mediaOf(r).secQ[secId];
   saveS();closeModal();renderForm();toast('Query reset to default');
+}
+// ── one-click attach: gallery image → an image question's answer array ──
+function mgAttach(secId,fId,idx,imgId){
+  const a=imgArr(secId,fId,idx);
+  if(a.some(e=>e&&typeof e==='object'&&e.g===imgId)){toast('Already attached');return;}
+  a.push({g:imgId});saveS();imgRerender(secId,fId,idx);toast('Image attached');
+}
+// Fixed sections without an image question get one automatically on first
+// attach — same as adding "Photos" via "+ Field", just seamless (asked for
+// the Watersports/Kids Club, Spa And Wellness and Resort Facilities sections).
+function mgEnsureImagesField(secId){
+  const r=S.resorts[S.activeResortId];
+  ensureSecDef(r,secId);
+  const fields=getSecFields(r,secId);
+  let f=fields.find(x=>x.type==='images');
+  if(!f){f={id:'cf'+Date.now(),label:'Photos',type:'images'};fields.push(f);toast('Added a “Photos” question to this section');}
+  return f.id;
+}
+function mgAttachFixed(secId,imgId){
+  mgAttach(secId,mgEnsureImagesField(secId),-1,imgId);
+  renderForm();
+}
+function mgAttachAll(secId,fId,idx,ids){
+  const a=imgArr(secId,fId,idx);let n=0;
+  String(ids||'').split(',').filter(Boolean).forEach(id=>{
+    if(!a.some(e=>e&&typeof e==='object'&&e.g===id)){a.push({g:id});n++;}
+  });
+  saveS();renderForm();toast(n+' image(s) attached');
+}
+function mgEntrySuggest(r,name){
+  const n=String(name||'').trim().toLowerCase();
+  if(n.length<3)return[];
+  return mediaOf(r).imgs.filter(i=>i.name.toLowerCase().includes(n));
 }
 function mgCatHTML(r,c,depth){
   const open=MG_OPEN[c.id]!==false;
