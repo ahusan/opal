@@ -2488,13 +2488,15 @@ function fmtHours(v){
 function isHoursArray(v){return Array.isArray(v)&&v.length>0&&typeof v[0]==='object'&&v[0]!==null&&('days' in v[0]||'open' in v[0]||'close' in v[0]||'name' in v[0]);}
 
 // ══ MEDIA GALLERY — R2-backed image handling per resort ══════════════════════
-// Structure lives in resort.media = { cats:[{id,name,parent}], imgs:[{id,name,cat,ct,size,st,at}] }
+// Structure lives in resort.media = { cats:[{id,name,parent}], imgs:[{id,name,label?,cat,ct,size,st,at}], sets:[{id,name,q}], secQ:{secId:query} }
 // st: 'ok' = uploaded to R2, 'up' = uploading, 'err' = upload failed, 'ref' = name-only record.
 // Bytes live in R2 via /api/media/<resortId>/<imgId>/<orig|thumb> — see functions/api/media.
 function mediaOf(r){
-  if(!r.media||typeof r.media!=='object')r.media={cats:[],imgs:[]};
+  if(!r.media||typeof r.media!=='object')r.media={cats:[],imgs:[],sets:[],secQ:{}};
   if(!Array.isArray(r.media.cats))r.media.cats=[];
   if(!Array.isArray(r.media.imgs))r.media.imgs=[];
+  if(!Array.isArray(r.media.sets))r.media.sets=[];
+  if(!r.media.secQ||typeof r.media.secQ!=='object'||Array.isArray(r.media.secQ))r.media.secQ={};
   return r.media;
 }
 function mediaUrl(rid,imgId,kind){return API_BASE+'/media/'+encodeURIComponent(rid)+'/'+encodeURIComponent(imgId)+'/'+kind;}
@@ -2571,6 +2573,7 @@ function renderGallerySec(resort){
     <input class="mg-search" id="mgSearchInp" placeholder='🔎 Search file names — e.g. f&b "kids club"' value="${eh(MG_QUERY)}" oninput="mgSearch(this.value)">
     <button class="mg-btn" id="mgSaveSetBtn" style="display:${MG_QUERY.trim()?'inline-block':'none'}" onclick="mgSetSave()">💾 Save as photoset</button>
   </div>`;
+  html+=mgSetChipsHTML(resort);
   html+=`<div id="mgTree">${mgTreeHTML(resort)}</div>`;
   return html;
 }
@@ -2604,7 +2607,58 @@ function mgSearch(v){
   const b=document.getElementById('mgSaveSetBtn');
   if(b)b.style.display=v.trim()?'inline-block':'none';
 }
-function mgSetSave(){toast('Photosets arrive in the next change');}
+// ── photosets: saved searches, dynamic membership (a photoset IS its query) ──
+function mgSetChipsHTML(r){
+  const sets=mediaOf(r).sets;if(!sets.length)return'';
+  return`<div class="mg-sets">${sets.map(s=>{
+    const n=mediaOf(r).imgs.filter(i=>mgMatch(s.q,i.name)).length;
+    return`<span class="mg-set-chip" onclick="mgSetApply('${s.id}')" title="Query: ${eh(s.q)}">📸 ${eh(s.name)} <span class="mg-set-n">${n}</span>
+      <button title="Edit photoset" onclick="event.stopPropagation();mgSetEdit('${s.id}')">✏</button>
+      <button class="del" title="Delete photoset" onclick="event.stopPropagation();mgSetDel('${s.id}')">✕</button></span>`;
+  }).join('')}</div>`;
+}
+function mgSetSave(){
+  const q=MG_QUERY.trim();if(!q)return;
+  openModal(`<h3>Save photoset</h3>
+    <div class="mr2"><label>Photoset name</label><input type="text" id="mgsn" placeholder="e.g. Bars press kit" onkeydown="if(event.key==='Enter')mgSetDoSave()"></div>
+    <p style="font-size:var(--fs-xs);color:var(--text3);">Query: <code>${eh(q)}</code> — the photoset always shows whatever currently matches this search.</p>
+    <div class="ma"><button onclick="closeModal()">Cancel</button><button class="bp2" onclick="mgSetDoSave()">Save</button></div>`);
+  setTimeout(()=>document.getElementById('mgsn').focus(),50);
+}
+function mgSetDoSave(){
+  const name=document.getElementById('mgsn').value.trim();if(!name)return;
+  const r=S.resorts[S.activeResortId];
+  mediaOf(r).sets.push({id:mgId('s'),name,q:MG_QUERY.trim()});
+  saveS();closeModal();renderForm();toast('Photoset saved');
+}
+function mgSetApply(id){
+  const r=S.resorts[S.activeResortId];const s=mediaOf(r).sets.find(x=>x.id===id);if(!s)return;
+  MG_QUERY=s.q;renderForm();
+}
+function mgSetEdit(id){
+  const r=S.resorts[S.activeResortId];const s=mediaOf(r).sets.find(x=>x.id===id);if(!s)return;
+  openModal(`<h3>Edit photoset</h3>
+    <div class="mr2"><label>Photoset name</label><input type="text" id="mgsn" value="${eh(s.name)}"></div>
+    <div class="mr2"><label>Search terms (every term must appear in the file name)</label><input type="text" id="mgsq" value="${eh(s.q)}" onkeydown="if(event.key==='Enter')mgSetDoEdit('${id}')"></div>
+    <div class="ma"><button onclick="closeModal()">Cancel</button><button class="bp2" onclick="mgSetDoEdit('${id}')">Save</button></div>`);
+  setTimeout(()=>{const e=document.getElementById('mgsn');e.focus();e.select();},50);
+}
+function mgSetDoEdit(id){
+  const r=S.resorts[S.activeResortId];const s=mediaOf(r).sets.find(x=>x.id===id);if(!s)return;
+  const name=document.getElementById('mgsn').value.trim(),q=document.getElementById('mgsq').value.trim();
+  if(!name||!q)return;
+  s.name=name;s.q=q;saveS();closeModal();renderForm();toast('Photoset updated');
+}
+function mgSetDel(id){
+  const r=S.resorts[S.activeResortId];const s=mediaOf(r).sets.find(x=>x.id===id);if(!s)return;
+  openModal(`<h3>Delete photoset</h3><p>Delete <strong>${eh(s.name)}</strong>? Images are never deleted — a photoset is just a saved search.</p>
+    <div class="ma"><button onclick="closeModal()">Cancel</button><button class="bd" onclick="mgSetDoDel('${id}')">Delete</button></div>`);
+}
+function mgSetDoDel(id){
+  const r=S.resorts[S.activeResortId];const m=mediaOf(r);
+  m.sets=m.sets.filter(s=>s.id!==id);
+  saveS();closeModal();renderForm();toast('Photoset deleted');
+}
 function mgCatHTML(r,c,depth){
   const open=MG_OPEN[c.id]!==false;
   const imgs=mgImgs(r,c.id),kids=mgCats(r,c.id);
