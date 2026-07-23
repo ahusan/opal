@@ -2659,6 +2659,21 @@ function mgSetDoDel(id){
   m.sets=m.sets.filter(s=>s.id!==id);
   saveS();closeModal();renderForm();toast('Photoset deleted');
 }
+// ── section image queries: override ?? built-in seed ?? derived from title ──
+// Seeds are single broad terms — the filename hierarchy makes them precise
+// ("f&b" hits every "… - F&B - …" file).
+const MG_SEED={restaurants:'f&b',bars:'f&b',fnb:'f&b',room_types:'accommodation',accommodation:'accommodation',family:'kids',marine:'watersports',facilities_fixed:'facilities',resort_profile:'general',spa:'wellness'};
+const MG_STOP=new Set(['and','the','for','with','from','into','your','all','other','misc','resort','types','type','club','island']);
+function mgTitleSeed(title){
+  const words=String(title||'').toLowerCase().replace(/[^a-z0-9\s&]/g,' ').split(/\s+/).filter(w=>w.length>=4&&!MG_STOP.has(w));
+  if(!words.length)return null;
+  return words.sort((a,b)=>b.length-a.length)[0];
+}
+function mgSecQuery(r,sec){
+  const o=mediaOf(r).secQ[sec.id];
+  if(o!==undefined&&o!==null)return String(o).trim()||null;
+  return MG_SEED[sec.id]||mgTitleSeed(sec.title);
+}
 function mgCatHTML(r,c,depth){
   const open=MG_OPEN[c.id]!==false;
   const imgs=mgImgs(r,c.id),kids=mgCats(r,c.id);
