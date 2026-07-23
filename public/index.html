@@ -2498,6 +2498,21 @@ function mgCountDeep(r,catId){
   return n;
 }
 function cleanSeg(s){return String(s||'').replace(/[_\s]+$/,'').trim();}
+// Filename convention "<Resort> - <Segment> - … - <Label>.<ext>" is the structure
+// (management decision 2026-07-23): segments become the category path, the last
+// token is the card label. The resort token is dropped positionally; a doubled
+// resort prefix (known naming mistake) is collapsed. cats:null ⇒ name doesn't
+// follow the convention — caller falls back to the folder path.
+function mgParseName(name){
+  const raw=String(name||'');
+  const toks=raw.split(' - ').map(s=>s.trim()).filter(Boolean);
+  while(toks.length>1&&toks[0].toLowerCase()===toks[1].toLowerCase())toks.shift();
+  const stripped=toks.length>1?toks.slice(1).join(' - '):raw;
+  if(toks.length<3)return{cats:null,label:raw,stripped};
+  const segs=toks.slice(1);
+  const label=segs[segs.length-1].replace(/\.[A-Za-z0-9]+$/,'').trim()||segs[segs.length-1];
+  return{cats:segs.slice(0,-1).map(cleanSeg).filter(Boolean),label,stripped};
+}
 function mgId(p){return p+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function mgEnsurePath(r,parts){
   let parent=null;
