@@ -2588,7 +2588,7 @@ function mgCardHTML(r,i){
   else inner=`<div class="mg-ph">🖼<div class="mg-ph-t">name only</div></div>`;
   return`<div class="mg-card" id="mgc_${i.id}" onclick="mgView('${i.id}')" title="${eh(i.name)}">
     <div class="mg-thumb">${inner}</div>
-    <div class="mg-name">${eh(i.name)}</div>
+    <div class="mg-name">${eh(i.label||i.name)}</div>
     <button class="mg-x" title="Delete image" onclick="event.stopPropagation();mgDelImg('${i.id}')">✕</button>
   </div>`;
 }
@@ -2675,14 +2675,11 @@ function mgImportParts(rel,rn){
   else if(parts.length)parts.shift();            // no wrapper anywhere — drop the picked folder
   return{parts:parts.map(cleanSeg).filter(Boolean),resortSeg};
 }
-// Proper display name: collapse a duplicated leading token and strip redundant
-// "<Resort Name> - " prefixes (the export convention repeats them in every file).
-function mgProperName(name,cands){
-  const toks=String(name||'').split(' - ');
-  const low=(cands||[]).filter(Boolean).map(c=>String(c).toLowerCase().trim());
-  while(toks.length>1&&toks[0].trim().toLowerCase()===toks[1].trim().toLowerCase())toks.shift();
-  while(toks.length>1&&low.includes(toks[0].trim().toLowerCase()))toks.shift();
-  return toks.join(' - ')||String(name||'');
+// Category segments for one imported file: the filename convention wins;
+// folder paths are only a fallback for non-conforming names.
+function mgJobParts(rel,fileName,rn){
+  const pn=mgParseName(fileName);
+  return pn.cats||mgImportParts(rel,rn).parts;
 }
 function mgImportFolder(ev){
   const all=[...ev.target.files];ev.target.value='';
@@ -2691,22 +2688,21 @@ function mgImportFolder(ev){
   const files=all.filter(f=>f.type.startsWith('image/')&&!f.name.startsWith('.'));
   if(!files.length){toast('No images found in that folder');return;}
   const jobs=files.map(f=>{
-    const{parts,resortSeg}=mgImportParts(f.webkitRelativePath||f.name,rn);
-    return{file:f,cat:parts.length?mgEnsurePath(r,parts):null,
-           name:mgProperName(f.name,[r.name,resortSeg])};
+    const parts=mgJobParts(f.webkitRelativePath||f.name,f.name,rn);
+    return{file:f,cat:parts.length?mgEnsurePath(r,parts):null};
   });
   mgAddFiles(jobs);
 }
-// jobs: [{file, cat, name?}] — creates entries, saves, renders, then uploads in background
+// jobs: [{file, cat}] — creates entries, saves, renders, then uploads in background
 function mgAddFiles(jobs){
   const r=S.resorts[S.activeResortId];if(!r)return null;
   const m=mediaOf(r);let added=0,skipped=0;const newIds=[];
   jobs.forEach(j=>{
-    const nm=j.name||j.file.name;
+    const pn=mgParseName(j.file.name);
     const dup=m.imgs.find(im=>(im.cat||null)===(j.cat||null)&&
-      (im.name.toLowerCase()===nm.toLowerCase()||im.name.toLowerCase()===j.file.name.toLowerCase()));
+      (im.name.toLowerCase()===j.file.name.toLowerCase()||im.name.toLowerCase()===pn.stripped.toLowerCase()));
     if(dup){skipped++;return;}
-    const im={id:mgId('i'),name:nm,cat:j.cat||null,ct:j.file.type,size:j.file.size,
+    const im={id:mgId('i'),name:j.file.name,label:pn.cats?pn.label:undefined,cat:j.cat||null,ct:j.file.type,size:j.file.size,
               st:REMOTE?'up':'ref',at:new Date().toISOString()};
     m.imgs.push(im);newIds.push(im.id);added++;
     if(REMOTE)upEnqueue({resortId:r.id,imgId:im.id,file:j.file});
