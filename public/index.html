@@ -850,8 +850,16 @@ function loadPending(){try{const p=JSON.parse(localStorage.getItem('mrs_pending'
 // every push so the server can 409 instead of letting a stale tab overwrite a
 // teammate's newer edit. _meta[id] = {by,at} for the "last edited" display.
 let _stamps={},_meta={};
-function saveStamps(){try{localStorage.setItem('mrs_stamps',JSON.stringify(_stamps));}catch(e){}}
-function loadStamps(){try{_stamps=JSON.parse(localStorage.getItem('mrs_stamps')||'{}')||{};}catch(e){_stamps={};}}
+// _cfgBase = {stamp, doc}: the server updated_at we last saw for the shared section
+// config, plus the config JSON at that moment. `stamp` is sent as `base` on every
+// /config push (server 409s on mismatch); `doc` lets a conflict distinguish "I never
+// touched the structure" (adopt theirs silently) from a real structural divergence.
+let _cfgBase={stamp:null,doc:null};
+function saveStamps(){try{localStorage.setItem('mrs_stamps',JSON.stringify(_stamps));localStorage.setItem('mrs_cfg_base',JSON.stringify(_cfgBase));}catch(e){}}
+function loadStamps(){
+  try{_stamps=JSON.parse(localStorage.getItem('mrs_stamps')||'{}')||{};}catch(e){_stamps={};}
+  try{const c=JSON.parse(localStorage.getItem('mrs_cfg_base')||'null');if(c&&typeof c==='object')_cfgBase={stamp:c.stamp||null,doc:c.doc||null};}catch(e){}
+}
 function scheduleSync(){
   if(!REMOTE)return;
   if(S.activeResortId){
@@ -881,7 +889,16 @@ async function flushSync(){
         throw err;
       }
     }
-    if(cfg)await api('PUT','/config',{doc:cfgDoc()});
+    if(cfg){
+      try{
+        const doc=cfgDoc();
+        const res=await api('PUT','/config',{doc,base:_cfgBase.stamp});
+        _cfgBase={stamp:res.updated_at,doc};saveStamps();
+      }catch(err){
+        if(err.status===409&&err.body&&err.body.server){cfgConflict(err.body.server);} // conflict flow owns the config now
+        else throw err;
+      }
+    }
     setSyncStatus('saved');renderFormMeta();
   }catch(e){
     // Re-mark dirty so the next change retries; data is safe in localStorage meanwhile.
@@ -935,6 +952,44 @@ function resolveConflict(which){
     setSyncStatus('saved');
   }
 }
+// ── Config conflict: a teammate changed the shared section layout after we last pulled ──
+function applyCfg(docStr){
+  try{
+    const c=JSON.parse(docStr);
+    S.customSections=c.customSections||[];S.sectionOrder=c.sectionOrder||[];S.hiddenSections=c.hiddenSections||[];
+    if(c.globalSectionDefs)S.globalSectionDefs=c.globalSectionDefs;
+  }catch(e){}
+}
+let _cfgConflictSrv=null;
+function cfgConflict(server){
+  const mine=cfgDoc();
+  // Same content, or we never changed the structure since our last pull → adopt theirs silently.
+  if(mine===server.doc||mine===_cfgBase.doc){
+    if(mine!==server.doc){applyCfg(server.doc);refreshChrome();renderForm();}
+    _cfgBase={stamp:server.updated_at,doc:server.doc};_dirtyConfig=false;
+    saveStamps();savePending();
+    try{localStorage.setItem('mrs_v6',JSON.stringify(S));}catch(e){}
+    return;
+  }
+  _cfgConflictSrv=server;
+  const who=server.updated_by||'a teammate';
+  const when=server.updated_at?new Date(server.updated_at).toLocaleString():'';
+  openModal(`<h3>⚠️ Section layout conflict</h3>
+    <p><strong>${eh(who)}</strong> changed the shared form structure (sections, questions, ordering) ${when?`at ${eh(when)} `:''}while you had unsaved structure edits. Which layout should the team keep?</p>
+    <div class="ma"><button onclick="cfgResolve('theirs')">Their layout (discard my structure edits)</button>
+    <button class="bp2" onclick="cfgResolve('mine')">My layout (overwrite theirs)</button></div>`);
+}
+function cfgResolve(which){
+  const srv=_cfgConflictSrv;if(!srv)return;_cfgConflictSrv=null;closeModal();
+  _cfgBase={stamp:srv.updated_at,doc:srv.doc};
+  if(which==='mine'){
+    _dirtyConfig=true;saveStamps();savePending();flushSync(); // re-push on top of their stamp
+  }else{
+    applyCfg(srv.doc);_dirtyConfig=false;saveStamps();savePending();
+    try{localStorage.setItem('mrs_v6',JSON.stringify(S));}catch(e){}
+    refreshChrome();renderForm();setSyncStatus('saved');
+  }
+}
 function setSyncStatus(s){
   const el=document.getElementById('syncStatus');if(!el)return;
   if(!REMOTE){el.textContent='● Standalone file — saved locally';el.style.color='var(--text3)';return;}
@@ -971,11 +1026,13 @@ async function loadRemote(){
   _dirtyResorts.forEach(id=>{if(local[id])merged[id]=local[id];});
   S.resorts=merged;
   saveStamps();
-  if(cfg&&cfg.doc){try{
-    const c=JSON.parse(cfg.doc);
-    S.customSections=c.customSections||[];S.sectionOrder=c.sectionOrder||[];S.hiddenSections=c.hiddenSections||[];
-    if(c.globalSectionDefs)S.globalSectionDefs=c.globalSectionDefs;
-  }catch(e){}}
+  // Adopt the server's section layout unless we have an un-pushed structure edit
+  // queued (it's about to be pushed with our old base and conflict-checked there).
+  if(cfg&&cfg.doc&&!_dirtyConfig){
+    applyCfg(cfg.doc);
+    _cfgBase={stamp:cfg.updated_at||null,doc:cfg.doc};
+    saveStamps();
+  }
   try{localStorage.setItem('mrs_v6',JSON.stringify(S));}catch(e){}
 }
 async function seedRemote(){
@@ -984,7 +1041,9 @@ async function seedRemote(){
       const res=await api('PUT','/resorts',{id:r.id,name:r.name,doc:JSON.stringify(r),base:_stamps[r.id]!==undefined?_stamps[r.id]:null});
       _stamps[r.id]=res.updated_at;_meta[r.id]={by:'you',at:res.updated_at};
     }
-    await api('PUT','/config',{doc:cfgDoc()});
+    const doc=cfgDoc();
+    const res=await api('PUT','/config',{doc,base:_cfgBase.stamp});
+    _cfgBase={stamp:res.updated_at,doc};
     saveStamps();setSyncStatus('saved');toast('Uploaded to shared database');
   }catch(e){setSyncStatus('offline');toast('Upload failed — will retry as you edit');}
 }
@@ -1006,8 +1065,22 @@ async function bootstrap(){
 // edited, un-pushed) resorts are never touched; the open resort re-renders
 // only if it changed remotely and has no local edits pending. ──
 async function refreshRemote(){
-  if(!REMOTE||_syncing||document.hidden||_conflict)return;
+  if(!REMOTE||_syncing||document.hidden||_conflict||_cfgConflictSrv)return;
   try{
+    // Section layout: if a teammate published a newer config and we have no
+    // structure edit of our own queued, adopt it automatically.
+    const cfg=await api('GET','/config');
+    if(cfg&&cfg.doc&&!_dirtyConfig&&(cfg.updated_at||null)!==_cfgBase.stamp){
+      const cfgChanged=cfg.doc!==cfgDoc();
+      if(cfgChanged)applyCfg(cfg.doc);
+      _cfgBase={stamp:cfg.updated_at||null,doc:cfg.doc};
+      saveStamps();
+      if(cfgChanged){
+        try{localStorage.setItem('mrs_v6',JSON.stringify(S));}catch(e){}
+        refreshChrome();renderForm();
+        toast("Form structure updated with a teammate's changes");
+      }
+    }
     const rows=await api('GET','/resorts');
     let changed=false,activeChanged=false;
     const seen=new Set();
