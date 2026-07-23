@@ -28,10 +28,18 @@ resort-data/
 
 Each resort has an **🖼️ Image Gallery** section. Pick the resort's media folder
 (e.g. `media/Ananea Madivaru Maldives/Image Gallery`) with **📁 Import media folder…**
-and the app rebuilds your folder structure as categories (Accommodation → Beach Pool
-Villa, F&B → Flores, …), makes a small thumbnail of every image in the browser, and
-uploads both thumbnail and original to R2. Survey questions can then link images
-straight from the gallery.
+and the app makes a small thumbnail of every image in the browser and uploads both
+thumbnail and original to R2. Survey questions can then link images straight from
+the gallery.
+
+The 🖼️ Image Gallery organises itself from the media **filename convention**
+`<Resort> - <Section> - … - <Label>.jpg` — folder structure is ignored, so a
+flat folder dump imports identically to a nested tree. Original filenames are
+stored untouched and drive everything: the Lightroom-style search box (terms
+AND together, quotes group phrases), saved searches ("photosets") with
+editable queries, and the 📷 Related-images panel each survey section shows.
+Section panels use an editable per-section query (✏ in the panel header);
+images are linked to answers only by explicit clicks (＋ / Attach all).
 
 Setup (once):
 
